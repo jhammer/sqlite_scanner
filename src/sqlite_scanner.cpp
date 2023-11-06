@@ -3,6 +3,7 @@
 #include "sqlite_db.hpp"
 #include "sqlite_stmt.hpp"
 #include "sqlite_scanner.hpp"
+#include "sqlite_filter_pushdown.hpp"
 #include <stdint.h>
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
@@ -23,6 +24,7 @@ struct SqliteLocalState : public LocalTableFunctionState {
 	SQLiteStatement stmt;
 	bool done = false;
 	vector<column_t> column_ids;
+	optional_ptr<TableFilterSet> filters;
 
 	~SqliteLocalState() {
 	}
@@ -94,6 +96,11 @@ static void SqliteInitInternal(ClientContext &context, const SqliteBindData &bin
 		local_state.db = &local_state.owned_db;
 	}
 
+	string filter_string;
+	if (local_state.filters) {
+		filter_string = SqliteFilterPushdown::TransformFilters(local_state.column_ids, local_state.filters, bind_data.names);
+	}
+
 	auto col_names = StringUtil::Join(
 	    local_state.column_ids.data(), local_state.column_ids.size(), ", ", [&](const idx_t column_id) {
 		    return column_id == (column_t)-1 ? "ROWID"
@@ -107,9 +114,15 @@ static void SqliteInitInternal(ClientContext &context, const SqliteBindData &bin
 		// the rowid
 		auto where_clause = StringUtil::Format(" WHERE ROWID BETWEEN %d AND %d", rowid_min, rowid_max);
 		sql += where_clause;
+		if (!filter_string.empty()) {
+			sql += " AND " + filter_string;
+		}
 	} else {
 		// we are scanning the entire table - no need for a WHERE clause
 		D_ASSERT(rowid_min == 0);
+		if (!filter_string.empty()) {
+			sql += " WHERE " + filter_string;
+		}
 	}
 	local_state.stmt = local_state.db->Prepare(sql.c_str());
 }
@@ -148,6 +161,7 @@ SqliteInitLocalState(ExecutionContext &context, TableFunctionInitInput &input, G
 	auto &gstate = global_state->Cast<SqliteGlobalState>();
 	auto result = make_uniq<SqliteLocalState>();
 	result->column_ids = input.column_ids;
+	result->filters = input.filters;
 	result->db = bind_data.global_db;
 	if (!SqliteParallelStateNext(context.client, bind_data, *result, gstate)) {
 		result->done = true;
@@ -258,6 +272,7 @@ SqliteScanFunction::SqliteScanFunction()
 	cardinality = SqliteCardinality;
 	to_string = SqliteToString;
 	projection_pushdown = true;
+	filter_pushdown = true;
 }
 
 struct AttachFunctionData : public TableFunctionData {
