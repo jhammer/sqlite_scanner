@@ -25,6 +25,7 @@ struct SqliteLocalState : public LocalTableFunctionState {
 	bool done = false;
 	vector<column_t> column_ids;
 	optional_ptr<TableFilterSet> filters;
+	bool disqualify_rowid_index;
 
 	~SqliteLocalState() {
 	}
@@ -37,6 +38,7 @@ struct SqliteGlobalState : public GlobalTableFunctionState {
 	mutex lock;
 	idx_t position = 0;
 	idx_t max_threads;
+	bool disqualify_rowid_index = false;
 
 	idx_t MaxThreads() const override {
 		return max_threads;
@@ -112,7 +114,8 @@ static void SqliteInitInternal(ClientContext &context, const SqliteBindData &bin
 	if (bind_data.rows_per_group != idx_t(-1)) {
 		// we are scanning a subset of the rows - generate a WHERE clause based on
 		// the rowid
-		auto where_clause = StringUtil::Format(" WHERE ROWID BETWEEN %d AND %d", rowid_min, rowid_max);
+		auto rowid = local_state.disqualify_rowid_index ? "+ROWID" : "ROWID";
+		auto where_clause = StringUtil::Format(" WHERE %s BETWEEN %d AND %d", rowid, rowid_min, rowid_max);
 		sql += where_clause;
 		if (!filter_string.empty()) {
 			sql += " AND " + filter_string;
@@ -163,6 +166,7 @@ SqliteInitLocalState(ExecutionContext &context, TableFunctionInitInput &input, G
 	result->column_ids = input.column_ids;
 	result->filters = input.filters;
 	result->db = bind_data.global_db;
+	result->disqualify_rowid_index = gstate.disqualify_rowid_index;
 	if (!SqliteParallelStateNext(context.client, bind_data, *result, gstate)) {
 		result->done = true;
 	}
@@ -173,6 +177,10 @@ static unique_ptr<GlobalTableFunctionState> SqliteInitGlobalState(ClientContext 
                                                                   TableFunctionInitInput &input) {
 	auto result = make_uniq<SqliteGlobalState>(SqliteMaxThreads(context, input.bind_data.get()));
 	result->position = 0;
+	Value disqualify;
+	if (context.TryGetCurrentSetting("sqlite_disqualify_rowid_index", disqualify)) {
+		result->disqualify_rowid_index = BooleanValue::Get(disqualify);
+	}
 	return std::move(result);
 }
 
