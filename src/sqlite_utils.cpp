@@ -1,4 +1,5 @@
 #include "sqlite_utils.hpp"
+#include "sqlite_constants.hpp"
 
 namespace duckdb {
 
@@ -101,7 +102,11 @@ LogicalType SQLiteUtils::TypeToLogicalType(const string &sqlite_type) {
 
 	// datetime, timestamp
 	if (StringUtil::Contains(sqlite_type, "time")) {
+#if SQLITE_SCANNER_CORE_DATA_COMPATIBLE
+		return LogicalType::DOUBLE;
+#else
 		return LogicalType::TIMESTAMP;
+#endif
 	}
 
 	// decimal, numeric

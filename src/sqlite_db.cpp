@@ -6,6 +6,7 @@
 #include "duckdb/parser/parser.hpp"
 #include "sqlite_db.hpp"
 #include "sqlite_stmt.hpp"
+#include "sqlite_constants.hpp"
 
 namespace duckdb {
 
@@ -31,6 +32,9 @@ SQLiteDB &SQLiteDB::operator=(SQLiteDB &&other) noexcept {
 SQLiteDB SQLiteDB::Open(const string &path, bool is_read_only, bool is_shared) {
 	SQLiteDB result;
 	int flags = SQLITE_OPEN_PRIVATECACHE;
+#if SQLITE_SCANNER_CORE_DATA_COMPATIBLE
+	flags |= SQLITE_OPEN_AUTOPROXY;
+#endif
 	if (is_read_only) {
 		flags |= SQLITE_OPEN_READONLY;
 	} else {
@@ -46,6 +50,10 @@ SQLiteDB SQLiteDB::Open(const string &path, bool is_read_only, bool is_shared) {
 	if (rc != SQLITE_OK) {
 		throw std::runtime_error("Unable to open database \"" + path + "\": " + string(sqlite3_errstr(rc)));
 	}
+#if SQLITE_SCANNER_CORE_DATA_COMPATIBLE
+	int persist = 1;
+	sqlite3_file_control(result.db, nullptr, SQLITE_FCNTL_PERSIST_WAL, &persist);
+#endif
 	return result;
 }
 
