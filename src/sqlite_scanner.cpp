@@ -1,5 +1,6 @@
 #include "duckdb.hpp"
 
+#include "sqlite_constants.hpp"
 #include "sqlite_db.hpp"
 #include "sqlite_stmt.hpp"
 #include "sqlite_scanner.hpp"
@@ -15,6 +16,9 @@
 #include "duckdb/storage/storage_extension.hpp"
 
 #include <cmath>
+#if SQLITE_SCANNER_LOG_QUERIES
+#include <iostream>
+#endif
 
 namespace duckdb {
 
@@ -127,6 +131,10 @@ static void SqliteInitInternal(ClientContext &context, const SqliteBindData &bin
 			sql += " WHERE " + filter_string;
 		}
 	}
+
+#if SQLITE_SCANNER_LOG_QUERIES
+	std::cerr << sql << std::endl;
+#endif
 	local_state.stmt = local_state.db->Prepare(sql.c_str());
 }
 
