@@ -1,6 +1,6 @@
 #include "duckdb.hpp"
 
-#include "sqlite3.h"
+#include <sqlite3.h>
 #include "sqlite_utils.hpp"
 #include "sqlite_storage.hpp"
 #include "storage/sqlite_catalog.hpp"

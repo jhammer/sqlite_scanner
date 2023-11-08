@@ -1,6 +1,5 @@
 include_directories(include)
 
-add_subdirectory(sqlite)
 add_subdirectory(storage)
 
 add_library(
