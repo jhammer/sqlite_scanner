@@ -53,6 +53,7 @@ SQLiteDB SQLiteDB::Open(const string &path, bool is_read_only, bool is_shared) {
 #if SQLITE_SCANNER_CORE_DATA_COMPATIBLE
 	int persist = 1;
 	sqlite3_file_control(result.db, nullptr, SQLITE_FCNTL_PERSIST_WAL, &persist);
+	sqlite3_busy_timeout(result.db, 60 * 2 * 1000);
 #endif
 	return result;
 }
