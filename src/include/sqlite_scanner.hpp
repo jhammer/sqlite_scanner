@@ -9,9 +9,18 @@
 #pragma once
 
 #include "duckdb.hpp"
+#include "sqlite_constants.hpp"
 
 namespace duckdb {
 class SQLiteDB;
+
+struct SqliteInValuesFilter {
+	idx_t column_index;
+	unique_ptr<vector<hugeint_t>> values;
+
+	SqliteInValuesFilter(idx_t column_index, unique_ptr<vector<hugeint_t>> values) : column_index(column_index), values(std::move(values)) {
+	}
+};
 
 struct SqliteBindData : public TableFunctionData {
 	string file_name;
@@ -22,6 +31,9 @@ struct SqliteBindData : public TableFunctionData {
 
 	idx_t max_rowid = 0;
 	bool all_varchar = false;
+#if SQLITE_SCANNER_IN_FILTER_PUSHDOWN
+	vector<unique_ptr<SqliteInValuesFilter>> in_values_filters;
+#endif
 
 	idx_t rows_per_group = 122880;
 	SQLiteDB *global_db;

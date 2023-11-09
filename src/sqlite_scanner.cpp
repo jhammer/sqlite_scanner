@@ -14,10 +14,16 @@
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/storage/storage_extension.hpp"
+#include "duckdb/planner/expression/bound_operator_expression.hpp"
+#include "duckdb/planner/expression/bound_constant_expression.hpp"
+#include "duckdb/planner/operator/logical_get.hpp"
 
 #include <cmath>
 #if SQLITE_SCANNER_LOG_QUERIES
 #include <iostream>
+#endif
+#if SQLITE_SCANNER_IN_FILTER_PUSHDOWN
+#include <sstream>
 #endif
 
 namespace duckdb {
@@ -107,6 +113,29 @@ static void SqliteInitInternal(ClientContext &context, const SqliteBindData &bin
 		filter_string = SqliteFilterPushdown::TransformFilters(local_state.column_ids, local_state.filters, bind_data.names);
 	}
 
+#if SQLITE_SCANNER_IN_FILTER_PUSHDOWN
+	for (auto &filter : bind_data.in_values_filters) {
+		auto &values = filter->values;
+		std::ostringstream stream;
+        
+        for (auto it = values->begin(); it != values->end(); ++it) {
+            if (it != values->begin()) {
+                stream << ",";
+            }
+            
+            stream << static_cast<int64_t>(*it);
+        }
+
+		auto in_clause = StringUtil::Format("%s IN (%s)", bind_data.names[filter->column_index], stream.str());
+
+		if (!filter_string.empty()) {
+			filter_string += " AND ";
+		}
+
+		filter_string += in_clause;
+	}
+#endif
+
 	auto col_names = StringUtil::Join(
 	    local_state.column_ids.data(), local_state.column_ids.size(), ", ", [&](const idx_t column_id) {
 		    return column_id == (column_t)-1 ? "ROWID"
@@ -137,6 +166,83 @@ static void SqliteInitInternal(ClientContext &context, const SqliteBindData &bin
 #endif
 	local_state.stmt = local_state.db->Prepare(sql.c_str());
 }
+
+#if SQLITE_SCANNER_IN_FILTER_PUSHDOWN
+static bool PushdownFilter(unique_ptr<Expression> &filter, SqliteBindData &bind_data, vector<column_t> &column_ids)
+{
+	if (filter->type != ExpressionType::COMPARE_IN) {
+		return false;
+	}
+
+	auto &func = filter->Cast<BoundOperatorExpression>();
+	auto in_values = make_uniq<vector<hugeint_t>>();
+
+	D_ASSERT(func.children.size() > 1);
+
+	if (func.children[0]->expression_class != ExpressionClass::BOUND_COLUMN_REF) {
+		return false;
+	}
+
+	auto &column_ref = func.children[0]->Cast<BoundColumnRefExpression>();
+	auto column_index = column_ids[column_ref.binding.column_index];
+	
+	if (column_index == COLUMN_IDENTIFIER_ROW_ID) {
+		return false;
+	}
+	
+	//! check if all children are const expr
+	bool children_constant = true;
+	for (size_t i {1}; i < func.children.size(); i++) {
+		if (func.children[i]->type != ExpressionType::VALUE_CONSTANT) {
+			children_constant = false;
+		}
+	}
+	
+	if (!children_constant) {
+		return false;
+	}
+	
+	auto &fst_const_value_expr = func.children[1]->Cast<BoundConstantExpression>();
+	auto &type = fst_const_value_expr.value.type();
+	
+	if (!type.IsIntegral()) {
+		return false;
+	}
+
+	for (idx_t i = 1; i < func.children.size(); i++) {
+		auto &const_value_expr = func.children[i]->Cast<BoundConstantExpression>();
+		if (const_value_expr.value.IsNull()) {
+			return false;
+		}
+
+		in_values->push_back(const_value_expr.value.GetValue<hugeint_t>());
+	}
+
+	if (in_values->empty()) {
+		return false;
+	}
+
+	auto new_filter = make_uniq<SqliteInValuesFilter>(column_index, std::move(in_values));
+	bind_data.in_values_filters.emplace_back(std::move(new_filter));
+	return true;
+} 
+
+static void SqliteComplexFilterPushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data_p,
+                                     vector<unique_ptr<Expression>> &filters) {
+	auto &data = bind_data_p->Cast<SqliteBindData>();
+	vector<unique_ptr<Expression>> pruned_filters;
+
+	for (auto &filter : filters) {
+		auto filter_copy = filter->Copy();
+
+		if (!PushdownFilter(filter_copy, data, get.column_ids)) {
+			pruned_filters.emplace_back(std::move(filter_copy));
+		}
+	}
+
+	filters = std::move(pruned_filters);
+}
+#endif
 
 static unique_ptr<NodeStatistics> SqliteCardinality(ClientContext &context, const FunctionData *bind_data_p) {
 	D_ASSERT(bind_data_p);
@@ -287,6 +393,9 @@ SqliteScanFunction::SqliteScanFunction()
                     SqliteInitGlobalState, SqliteInitLocalState) {
 	cardinality = SqliteCardinality;
 	to_string = SqliteToString;
+#if SQLITE_SCANNER_IN_FILTER_PUSHDOWN
+	pushdown_complex_filter = SqliteComplexFilterPushdown;
+#endif
 	projection_pushdown = true;
 	filter_pushdown = true;
 }
