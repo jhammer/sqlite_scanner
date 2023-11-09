@@ -25,6 +25,7 @@ static void LoadInternal(DatabaseInstance &db) {
 	auto &config = DBConfig::GetConfig(db);
 	config.AddExtensionOption("sqlite_all_varchar", "Load all SQLite columns as VARCHAR columns", LogicalType::BOOLEAN);
 	config.AddExtensionOption("sqlite_disqualify_rowid_index", "Disqualify using the ROWID index when loading data", LogicalType::BOOLEAN);
+	config.AddExtensionOption("sqlite_log_queries", "Log SQL queries to STDERR", LogicalType::BOOLEAN);
 
 	config.storage_extensions["sqlite_scanner"] = make_uniq<SQLiteStorageExtension>();
 }

@@ -19,9 +19,7 @@
 #include "duckdb/planner/operator/logical_get.hpp"
 
 #include <cmath>
-#if SQLITE_SCANNER_LOG_QUERIES
 #include <iostream>
-#endif
 #if SQLITE_SCANNER_IN_FILTER_PUSHDOWN
 #include <sstream>
 #endif
@@ -49,6 +47,7 @@ struct SqliteGlobalState : public GlobalTableFunctionState {
 	idx_t position = 0;
 	idx_t max_threads;
 	bool disqualify_rowid_index = false;
+	bool log_queries = false;
 
 	idx_t MaxThreads() const override {
 		return max_threads;
@@ -96,7 +95,7 @@ static unique_ptr<FunctionData> SqliteBind(ClientContext &context, TableFunction
 }
 
 static void SqliteInitInternal(ClientContext &context, const SqliteBindData &bind_data, SqliteLocalState &local_state,
-                               idx_t rowid_min, idx_t rowid_max) {
+                               idx_t rowid_min, idx_t rowid_max, bool log_query) {
 	D_ASSERT(rowid_min <= rowid_max);
 
 	local_state.done = false;
@@ -160,10 +159,9 @@ static void SqliteInitInternal(ClientContext &context, const SqliteBindData &bin
 			sql += " WHERE " + filter_string;
 		}
 	}
-
-#if SQLITE_SCANNER_LOG_QUERIES
-	std::cerr << sql << std::endl;
-#endif
+	if (log_query) {
+		std::cerr << sql << std::endl;
+	}
 	local_state.stmt = local_state.db->Prepare(sql.c_str());
 }
 
@@ -265,7 +263,7 @@ static bool SqliteParallelStateNext(ClientContext &context, const SqliteBindData
 	if (gstate.position < bind_data.max_rowid) {
 		auto start = gstate.position;
 		auto end = start + bind_data.rows_per_group - 1;
-		SqliteInitInternal(context, bind_data, lstate, start, end);
+		SqliteInitInternal(context, bind_data, lstate, start, end, gstate.log_queries);
 		gstate.position = end + 1;
 		return true;
 	}
@@ -295,6 +293,17 @@ static unique_ptr<GlobalTableFunctionState> SqliteInitGlobalState(ClientContext 
 	if (context.TryGetCurrentSetting("sqlite_disqualify_rowid_index", disqualify)) {
 		result->disqualify_rowid_index = BooleanValue::Get(disqualify);
 	}
+	else {
+		result->disqualify_rowid_index = false;
+	}
+	Value log_queries;
+	if (context.TryGetCurrentSetting("sqlite_log_queries", log_queries)) {
+		result->log_queries = BooleanValue::Get(log_queries);
+	}
+	else {
+		result->log_queries = false;
+	}
+
 	return std::move(result);
 }
 
