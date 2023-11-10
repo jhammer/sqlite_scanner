@@ -6,3 +6,4 @@ sqlite/build
 tpch.db
 .clang-format
 *.tbl
+.vscode
